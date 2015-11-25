@@ -200,6 +200,10 @@ class Context
 	 */
 	function init()
 	{
+		if(!isset($GLOBALS['HTTP_RAW_POST_DATA']) && version_compare(PHP_VERSION, '5.6.0', '>=') === true) {
+			if(simplexml_load_string(file_get_contents("php://input")) !== false) $GLOBALS['HTTP_RAW_POST_DATA'] = file_get_contents("php://input");
+		}
+
 		// set context variables in $GLOBALS (to use in display handler)
 		$this->context = &$GLOBALS['__Context__'];
 		$this->context->lang = &$GLOBALS['lang'];
@@ -662,9 +666,21 @@ class Context
 			{
 				$url = base64_decode(self::get('default_url'));
 				$url_info = parse_url($url);
+
+				$oModuleModel = getModel('module');
+				$target_domain = (stripos($url, $default_url) !== 0) ? $url_info['host'] : $default_url;
+				$site_info = $oModuleModel->getSiteInfoByDomain($target_domain);
+				if(!$site_info->site_srl) {
+					$oModuleObject = new ModuleObject();
+					$oModuleObject->stop('msg_invalid_request');
+
+					return false;
+				}
+
 				$url_info['query'].= ($url_info['query'] ? '&' : '') . 'SSOID=' . session_id();
 				$redirect_url = sprintf('%s://%s%s%s?%s', $url_info['scheme'], $url_info['host'], $url_info['port'] ? ':' . $url_info['port'] : '', $url_info['path'], $url_info['query']);
 				header('location:' . $redirect_url);
+
 				return FALSE;
 			}
 			// for sites requesting SSO validation
@@ -1144,7 +1160,7 @@ class Context
 		$self->js_callback_func = $self->getJSCallbackFunc();
 
 		($type && $self->request_method = $type) or
-				(strpos($_SERVER['CONTENT_TYPE'], 'json') && $self->request_method = 'JSON') or
+				((strpos($_SERVER['CONTENT_TYPE'], 'json') || strpos($_SERVER['HTTP_CONTENT_TYPE'], 'json')) && $self->request_method = 'JSON') or
 				($GLOBALS['HTTP_RAW_POST_DATA'] && $self->request_method = 'XMLRPC') or
 				($self->js_callback_func && $self->request_method = 'JS_CALLBACK') or
 				($self->request_method = $_SERVER['REQUEST_METHOD']);
@@ -1167,7 +1183,7 @@ class Context
 	}
 
 	/**
-	 * handle request areguments for GET/POST
+	 * handle request arguments for GET/POST
 	 *
 	 * @return void
 	 */
@@ -1380,7 +1396,7 @@ class Context
 			{
 				$result[$k] = $v;
 
-				if($do_stripslashes && version_compare(PHP_VERSION, '5.9.0', '<') && get_magic_quotes_gpc())
+				if($do_stripslashes && version_compare(PHP_VERSION, '5.4.0', '<') && get_magic_quotes_gpc())
 				{
 					$result[$k] = stripslashes($result[$k]);
 				}
@@ -1413,7 +1429,7 @@ class Context
 	 */
 	function _setUploadedArgument()
 	{
-		if($_SERVER['REQUEST_METHOD'] != 'POST' || !$_FILES || stripos($_SERVER['CONTENT_TYPE'], 'multipart/form-data') === FALSE)
+		if($_SERVER['REQUEST_METHOD'] != 'POST' || !$_FILES || (stripos($_SERVER['CONTENT_TYPE'], 'multipart/form-data') === FALSE && stripos($_SERVER['HTTP_CONTENT_TYPE'], 'multipart/form-data') === FALSE))
 		{
 			return;
 		}
@@ -1654,6 +1670,7 @@ class Context
 					'document_srl.mid' => "$mid/$srl",
 					'document_srl.vid' => "$vid/$srl",
 					'document_srl.mid.vid' => "$vid/$mid/$srl",
+					'act' => ($is_feed && $act !== 'api') ? $act : '',
 					'act.mid' => $is_feed ? "$mid/$act" : '',
 					'act.mid.vid' => $is_feed ? "$vid/$mid/$act" : '',
 					'act.document_srl.key' => ($act == 'trackback') ? "$srl/$key/$act" : '',
